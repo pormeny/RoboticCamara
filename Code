@@ -1,0 +1,149 @@
+## Manuel Cuevas
+## Robitic Camara 
+## Code comes frome "Grimmett, Richard (2013-12-26). BeagleBone Robotic Projects" 
+##!/usr/bin/python
+import cv2.cv as cv
+import time
+import sys
+import math
+import datetime
+import serial
+
+####################################################################################
+# Moves the servos 90 degrees 
+# ## Code comes frome "Grimmett, Richard (2013-12-26). BeagleBone Robotic Projects" 
+#####################################################################################   
+class PololuMicroMaestro(object):
+    def __init__(self, port= "/dev/ttyACM0"):
+        self.ser = serial.Serial(port = port)
+    def setAngle(self, channel, angle):
+        minAngle = 0.0
+        maxAngle = 180.0
+        minTarget = 256.0
+        maxTarget = 13120.0
+        scaledValue = int((angle / ((maxAngle - minAngle) \
+/ (maxTarget - minTarget))) + minTarget)
+        commandByte = chr(0x84)
+        channelByte = chr(channel)
+        lowTargetByte = chr(scaledValue & 0x7F)
+        highTargetByte = chr((scaledValue >> 7) & 0x7F)
+        command = commandByte + channelByte + lowTargetByt\
+e + highTargetByte
+        self.ser.write(command)
+        self.ser.flush()
+    def close(self):
+        self.ser.close()
+
+####################################################################################
+# dectect the object and calcualte the center point of the object 
+#####################################################################################           
+def  detect_and_draw(img):        
+   cv.Smooth(img,img,cv.CV_BLUR,3)                  #onvert the image to HSV
+   if not img:
+      cv.WaitKey(0)
+      break
+   if not frame_copy:
+      frame_copy = cv.CreateImage((img.width,img.height), cv.IPL_DEPTH_8U, img.nChannels)
+   if img.origin == cv.IPL_ORIGIN_TL:               #make acopy original to dysplay at the end
+      cv.Copy(img, frame_copy)
+   else:
+      cv.Flip(img, frame_copy, 0)
+   
+  hue_img = cv.CreateImage(cv.GetSize(img), 8, 3)  #a binary image where the foreground pixels white
+  cv.CvtColor(img,hue_img, cv.CV_BGR2HSV)
+  threshold_img = cv.CreateImage(cv.GetSize(hue_img), 8, 1)), threshold_img) 
+  cv.InRangeS(hue_img, (38, 120, 60), (75, 255, 255), threshold_img)
+  
+  #edge detector
+  storage = cv.CreateMemStorage(0)                 
+  contour = cv.FindContours(threshold_img, storage, cv.CV_RETR_CCOMP, cv.CV_CHAIN_APPROX_SIMPLE)
+  
+   points = []
+   while contour:
+      rect = cv.BoundingRect(list(contour))
+      contour = contour.h_next()
+
+      size = (rect[2] * rect[3])
+      if size > 100:
+          pt1 = (rect[0], rect[1])
+          pt2 = (rect[0] + rect[2], rect[3])
+          cv.Rectangle(img, pt1, pt2, (160, 160, 160))
+          x1 = pt1[0]
+          x2 = pt2[0]
+          y1 = pt1[1]
+          y2 = pt2[1]
+          centrex = x1+((x2-x1)/2)
+          centrey = y1
+          centre = (centrex, centrey)
+          cv.ShowImage("result", img)
+return center
+        
+####################################################################################
+# calculates the anlge for the axis to move to get close 
+# the center of the object centre for this axis
+#####################################################################################      
+       
+def get_delta(loc, span, max_delta, centre_tolerance):
+    framecentre = span/2
+    delta = framecentre - loc
+    if abs(delta) < centre_tolerance: # within X pixels ofthe centre
+        delta = 0                   # so don't move - else we get weird oscillations
+    else:
+        is_neg = delta <= 0
+        to_get_near_centre = abs(delta) - centre_tolerance
+        if to_get_near_centre > 35:
+            delta = 4
+        else:
+            if to_get_near_centre > 25:    
+                delta = 3
+            else:               # move real slow if we're very near centre
+                delta = 1
+        if is_neg:
+         delta = delta * -1
+    return delta
+
+
+if __name__ == '__main__':
+   # open a serial port and set the servos to 90
+   robot = PololuMicroMaestro()
+   xCont=90
+   yCont=90
+   robot.setAngle(0,xCont)
+   robot.setAngle(1,yCont)
+
+   #Creates a widow 360 by 240 and gets the first v4l camera 
+   cv.NamedWindow("result", 1)
+   capture = cv.CaptureFromCAM(0)
+   cv.SetCaptureProperty(capture, 3, 360)
+   cv.SetCaptureProperty(capture, 4, 240)
+    
+   if capture:          
+      frame_copy = None
+
+    while True:
+      img = cv.QueryFrame(capture)
+      center = detect_and_draw(img)          #call funtion to get center point
+      centre = None
+
+      if centre is not None:
+         cx = centre[0]
+         cy = centre[1]
+
+         # modify the *-1 if your x or y directions are reversed!
+         xdelta = get_delta(cx, frame_copy.width, 6, 15) * -1
+         ydelta = get_delta(cy, frame_copy.height, 1, 25) * -1
+         print(xdelta, ydelta)
+         total_delta = abs(xdelta)+abs(ydelta)
+            if total_delta > 0:
+               sleep_for = 1/10.0*min(total_delta, 10)
+               sleep_for = min(sleep_for, 0.4)
+               xCont=(xCont + (xdelta/2))
+               yCont=(yCont - (ydelta/2))
+               print(xCont, yCont)
+               robot.setAngle(0,xCont)
+               robot.setAngle(1,yCont)
+            else:
+                sleep_for = 0
+        if cv.WaitKey(10) == 27:
+            break
+   cv.DestroyWindow("result")
